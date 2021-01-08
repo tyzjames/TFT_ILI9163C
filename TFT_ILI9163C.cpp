@@ -11,7 +11,7 @@
 
 //constructors
 
-#if defined(__MK20DX128__) || defined(__MK20DX256__)
+#if defined(__MK20DX128__) || defined(__MK20DX256__) || defined(__IMXRT1052__) || defined(__IMXRT1062__)
 	TFT_ILI9163C::TFT_ILI9163C(uint8_t cspin,uint8_t dcpin,uint8_t rstpin,uint8_t mosi,uint8_t sclk) : Adafruit_GFX(_TFTWIDTH,_TFTHEIGHT)
 	{
 		_cs   = cspin;
@@ -231,7 +231,7 @@
 	{
 		//nop
 	}
-#elif defined(__MK20DX128__) || defined(__MK20DX256__)//Teensy 3.0 & 3.1 
+#elif defined(__MK20DX128__) || defined(__MK20DX256__) || defined(__IMXRT1052__) || defined(__IMXRT1062__)//Teensy 3.0 & 3.1 
  
 	void TFT_ILI9163C::setBitrate(uint32_t n)
 	{
@@ -379,6 +379,37 @@ void TFT_ILI9163C::begin(void)
 		bitSet(_initError,1);
 		return;
 	}
+#elif defined(__IMXRT1052__) || defined(__IMXRT1062__)
+	ILI9163C_SPI = SPISettings(30000000, MSBFIRST, SPI_MODE0);
+	_pending_rx_count = 0;
+	SPI.setMOSI(_mosi);
+    SPI.setSCK(_sclk);
+	SPI.begin();
+	_csport = portOutputRegister(_cs);
+	_cspinmask = digitalPinToBitMask(_cs);
+	pinMode(_cs, OUTPUT);	
+	DIRECT_WRITE_HIGH(_csport, _cspinmask);
+	_spi_tcr_current = IMXRT_LPSPI4_S.TCR; // get the current TCR value 
+
+	// TODO:  Need to setup DC to actually work.
+	if (SPI.pinIsChipSelect(_rs)) {
+	 	uint8_t dc_cs_index = SPI.setCS(_rs);
+	 	_dcport = 0;
+	 	_dcpinmask = 0;
+	 	dc_cs_index--;	// convert to 0 based
+		_tcr_dc_assert = LPSPI_TCR_PCS(dc_cs_index);
+    	_tcr_dc_not_assert = LPSPI_TCR_PCS(3);
+	} else {
+		Serial.println("ILI9341_t3n: Error not DC is not valid hardware CS pin");
+		_dcport = portOutputRegister(_rs);
+		_dcpinmask = digitalPinToBitMask(_rs);
+		pinMode(_rs, OUTPUT);	
+		DIRECT_WRITE_HIGH(_dcport, _dcpinmask);
+		_tcr_dc_assert = LPSPI_TCR_PCS(0);
+    	_tcr_dc_not_assert = LPSPI_TCR_PCS(1);
+	}
+	maybeUpdateTCR(_tcr_dc_not_assert | LPSPI_TCR_FRAMESZ(7));
+
 #else//all the rest of possible boards
 	pinMode(_rs, OUTPUT);
 	pinMode(_cs, OUTPUT);
@@ -395,11 +426,11 @@ void TFT_ILI9163C::begin(void)
 	if (_rst != 255) {
 		pinMode(_rst, OUTPUT);
 		digitalWrite(_rst, HIGH);
-		delay(500);
+		delay(5);
 		digitalWrite(_rst, LOW);
-		delay(500);
+		delay(20);
 		digitalWrite(_rst, HIGH);
-		delay(500);
+		delay(150);
 	}
 
 /*
@@ -434,7 +465,7 @@ uint8_t TFT_ILI9163C::errorCode(void)
 
 void TFT_ILI9163C::chipInit() {
 	uint8_t i;
-	#if defined(__MK20DX128__) || defined(__MK20DX256__)
+	#if defined(__MK20DX128__) || defined(__MK20DX256__) || defined(__IMXRT1052__) || defined(__IMXRT1062__)
 		SPI.beginTransaction(ILI9163C_SPI);
 		
 		writecommand_cont(CMD_SWRESET);//software reset
@@ -626,7 +657,7 @@ void TFT_ILI9163C::colorSpace(uint8_t cspace) {
 }
 
 void TFT_ILI9163C::invertDisplay(boolean i) {
-	#if defined(__MK20DX128__) || defined(__MK20DX256__)
+	#if defined(__MK20DX128__) || defined(__MK20DX256__) || defined(__IMXRT1052__) || defined(__IMXRT1062__)
 		SPI.beginTransaction(ILI9163C_SPI);
 		writecommand_last(i ? CMD_DINVON : CMD_DINVOF);
 		SPI.endTransaction();
@@ -637,7 +668,7 @@ void TFT_ILI9163C::invertDisplay(boolean i) {
 
 void TFT_ILI9163C::display(boolean onOff) {
 	if (onOff){
-		#if defined(__MK20DX128__) || defined(__MK20DX256__)
+		#if defined(__MK20DX128__) || defined(__MK20DX256__) || defined(__IMXRT1052__) || defined(__IMXRT1062__)
 			SPI.beginTransaction(ILI9163C_SPI);
 			writecommand_last(CMD_DISPON);
 			SPI.endTransaction();
@@ -645,7 +676,7 @@ void TFT_ILI9163C::display(boolean onOff) {
 			writecommand(CMD_DISPON);
 		#endif
 	} else {
-		#if defined(__MK20DX128__) || defined(__MK20DX256__)
+		#if defined(__MK20DX128__) || defined(__MK20DX256__) || defined(__IMXRT1052__) || defined(__IMXRT1062__)
 			SPI.beginTransaction(ILI9163C_SPI);
 			writecommand_last(CMD_DISPOFF);
 			SPI.endTransaction();
@@ -657,7 +688,7 @@ void TFT_ILI9163C::display(boolean onOff) {
 
 void TFT_ILI9163C::idleMode(boolean onOff) {
 	if (onOff){
-		#if defined(__MK20DX128__) || defined(__MK20DX256__)
+		#if defined(__MK20DX128__) || defined(__MK20DX256__) || defined(__IMXRT1052__) || defined(__IMXRT1062__)
 			SPI.beginTransaction(ILI9163C_SPI);
 			writecommand_last(CMD_IDLEON);
 			SPI.endTransaction();
@@ -665,7 +696,7 @@ void TFT_ILI9163C::idleMode(boolean onOff) {
 			writecommand(CMD_IDLEON);
 		#endif
 	} else {
-		#if defined(__MK20DX128__) || defined(__MK20DX256__)
+		#if defined(__MK20DX128__) || defined(__MK20DX256__) || defined(__IMXRT1052__) || defined(__IMXRT1062__)
 			SPI.beginTransaction(ILI9163C_SPI);
 			writecommand_last(CMD_IDLEOF);
 			SPI.endTransaction();
@@ -679,7 +710,7 @@ void TFT_ILI9163C::sleepMode(boolean mode) {
 	if (mode){
 		if (sleep == 1) return;//already sleeping
 		sleep = 1;
-		#if defined(__MK20DX128__) || defined(__MK20DX256__)
+		#if defined(__MK20DX128__) || defined(__MK20DX256__) || defined(__IMXRT1052__) || defined(__IMXRT1062__)
 			SPI.beginTransaction(ILI9163C_SPI);
 			writecommand_last(CMD_SLPIN);
 			SPI.endTransaction();
@@ -690,7 +721,7 @@ void TFT_ILI9163C::sleepMode(boolean mode) {
 	} else {
 		if (sleep == 0) return; //Already awake
 		sleep = 0;
-		#if defined(__MK20DX128__) || defined(__MK20DX256__)
+		#if defined(__MK20DX128__) || defined(__MK20DX256__) || defined(__IMXRT1052__) || defined(__IMXRT1062__)
 			SPI.beginTransaction(ILI9163C_SPI);
 			writecommand_last(CMD_SLPOUT);
 			SPI.endTransaction();
@@ -705,7 +736,7 @@ void TFT_ILI9163C::defineScrollArea(uint16_t tfa, uint16_t bfa){
     tfa += __OFFSET;
     int16_t vsa = _GRAMHEIGH - tfa - bfa;
     if (vsa >= 0) {
-		#if defined(__MK20DX128__) || defined(__MK20DX256__)
+		#if defined(__MK20DX128__) || defined(__MK20DX256__) || defined(__IMXRT1052__) || defined(__IMXRT1062__)
 			SPI.beginTransaction(ILI9163C_SPI);
 			writecommand_cont(CMD_VSCLLDEF);
 			writedata16_cont(tfa);
@@ -723,7 +754,7 @@ void TFT_ILI9163C::defineScrollArea(uint16_t tfa, uint16_t bfa){
 
 void TFT_ILI9163C::scroll(uint16_t adrs) {
 	if (adrs <= _GRAMHEIGH) {
-	#if defined(__MK20DX128__) || defined(__MK20DX256__)
+	#if defined(__MK20DX128__) || defined(__MK20DX256__) || defined(__IMXRT1052__) || defined(__IMXRT1062__)
 		SPI.beginTransaction(ILI9163C_SPI);
 		writecommand_cont(CMD_VSSTADRS);
 		writedata16_last(adrs + __OFFSET);
@@ -739,7 +770,7 @@ void TFT_ILI9163C::scroll(uint16_t adrs) {
 //corrected! v3
 void TFT_ILI9163C::clearScreen(uint16_t color) {
 	int px;
-	#if defined(__MK20DX128__) || defined(__MK20DX256__)
+	#if defined(__MK20DX128__) || defined(__MK20DX256__) || defined(__IMXRT1052__) || defined(__IMXRT1062__)
 		SPI.beginTransaction(ILI9163C_SPI);
 		_setAddrWindow(0x00,0x00,_GRAMWIDTH,_GRAMHEIGH);
 		for (px = 0;px < _GRAMSIZE; px++){
@@ -760,7 +791,7 @@ void TFT_ILI9163C::startPushData(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t
 }
 
 void TFT_ILI9163C::pushData(uint16_t color) {
-	#if defined(__MK20DX128__) || defined(__MK20DX256__)
+	#if defined(__MK20DX128__) || defined(__MK20DX256__) || defined(__IMXRT1052__) || defined(__IMXRT1062__)
 		writedata16_cont(color);
 	#else
 		writedata16(color);
@@ -769,7 +800,7 @@ void TFT_ILI9163C::pushData(uint16_t color) {
 
 
 void TFT_ILI9163C::endPushData() {
-	#if defined(__MK20DX128__) || defined(__MK20DX256__)
+	#if defined(__MK20DX128__) || defined(__MK20DX256__) || defined(__IMXRT1052__) || defined(__IMXRT1062__)
 		writecommand_last(CMD_NOP);
 		SPI.endTransaction();
 	#endif
@@ -777,7 +808,7 @@ void TFT_ILI9163C::endPushData() {
 
 
 void TFT_ILI9163C::pushColor(uint16_t color) {
-	#if defined(__MK20DX128__) || defined(__MK20DX256__)
+	#if defined(__MK20DX128__) || defined(__MK20DX256__) || defined(__IMXRT1052__) || defined(__IMXRT1062__)
 		SPI.beginTransaction(ILI9163C_SPI);
 		writedata16_last(color);
 		SPI.endTransaction();
@@ -789,7 +820,7 @@ void TFT_ILI9163C::pushColor(uint16_t color) {
 void TFT_ILI9163C::writeScreen24(const uint32_t *bitmap,uint16_t size) {
 	uint16_t color;
 	uint16_t px;
-	#if defined(__MK20DX128__) || defined(__MK20DX256__)
+	#if defined(__MK20DX128__) || defined(__MK20DX256__) || defined(__IMXRT1052__) || defined(__IMXRT1062__)
 		writecommand_cont(CMD_RAMWR);
 		for (px = 0;px < size; px++){//16384
 			color = Color24To565(bitmap[px]);
@@ -828,7 +859,7 @@ void TFT_ILI9163C::drawPixel(int16_t x, int16_t y, uint16_t color) {
 	if (boundaryCheck(x,y)) return;
 	if ((x < 0) || (y < 0)) return;
 	setAddr(x,y,x+1,y+1);
-	#if defined(__MK20DX128__) || defined(__MK20DX256__)
+	#if defined(__MK20DX128__) || defined(__MK20DX256__) || defined(__IMXRT1052__) || defined(__IMXRT1062__)
 		writedata16_last(color);
 		SPI.endTransaction();
 	#else
@@ -844,7 +875,7 @@ void TFT_ILI9163C::drawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t color
 	if (((y + h) - 1) >= _height) h = _height-y;
 	setAddr(x,y,x,(y+h)-1);
 	while (h-- > 0) {
-		#if defined(__MK20DX128__) || defined(__MK20DX256__)
+		#if defined(__MK20DX128__) || defined(__MK20DX256__) || defined(__IMXRT1052__) || defined(__IMXRT1062__)
 		if (h == 0){
 			writedata16_last(color);
 		} else {
@@ -870,7 +901,7 @@ void TFT_ILI9163C::drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t color
 	if (((x+w) - 1) >= _width)  w = _width-x;
 	setAddr(x,y,(x+w)-1,y);
 	while (w-- > 0) {
-		#if defined(__MK20DX128__) || defined(__MK20DX256__)
+		#if defined(__MK20DX128__) || defined(__MK20DX256__) || defined(__IMXRT1052__) || defined(__IMXRT1062__)
 		if (w == 0){
 			writedata16_last(color);
 		} else {
@@ -886,24 +917,30 @@ void TFT_ILI9163C::drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t color
 }
 
 void TFT_ILI9163C::fillScreen(uint16_t color) {
-	clearScreen(color);
+	// clearScreen(color);
+	Serial.println("Filling screen");
+	delay(5);
+	fillRect(0, 0, _TFTWIDTH, _TFTHEIGHT, color);
 }
 
 // fill a rectangle
 void TFT_ILI9163C::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) {
+	Serial.println("Checking boundary");
 	if (boundaryCheck(x,y)) return;
+	Serial.println("Boundary checked");
 	if (((x + w) - 1) >= _width)  w = _width  - x;
 	if (((y + h) - 1) >= _height) h = _height - y;
 	setAddr(x,y,(x+w)-1,(y+h)-1);
+	Serial.println("Address set");
 	for (y = h;y > 0;y--) {
 		for (x = w;x > 1;x--) {
-			#if defined(__MK20DX128__) || defined(__MK20DX256__)
+			#if defined(__MK20DX128__) || defined(__MK20DX256__) || defined(__IMXRT1052__) || defined(__IMXRT1062__)
 				writedata16_cont(color);
 			#else
 				writedata16(color);
 			#endif
 		}
-		#if defined(__MK20DX128__) || defined(__MK20DX256__)
+		#if defined(__MK20DX128__) || defined(__MK20DX256__) || defined(__IMXRT1052__) || defined(__IMXRT1062__)
 			writedata16_last(color);
 		#else
 			writedata16(color);
@@ -914,7 +951,7 @@ void TFT_ILI9163C::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t
 	#endif
 }
 
-#if defined(__MK20DX128__) || defined(__MK20DX256__)
+#if defined(__MK20DX128__) || defined(__MK20DX256__) || defined(__IMXRT1052__) || defined(__IMXRT1062__)
 void TFT_ILI9163C::drawLine(int16_t x0, int16_t y0,int16_t x1, int16_t y1, uint16_t color){
 	if (y0 == y1) {
 		if (x1 > x0) {
@@ -936,12 +973,12 @@ void TFT_ILI9163C::drawLine(int16_t x0, int16_t y0,int16_t x1, int16_t y1, uint1
 
 	bool steep = abs(y1 - y0) > abs(x1 - x0);
 	if (steep) {
-		swap(x0, y0);
-		swap(x1, y1);
+		std::swap(x0, y0);
+		std::swap(x1, y1);
 	}
 	if (x0 > x1) {
-		swap(x0, x1);
-		swap(y0, y1);
+		std::swap(x0, x1);
+		std::swap(y0, y1);
 	}
 
 	int16_t dx, dy;
@@ -1016,7 +1053,7 @@ void TFT_ILI9163C::drawRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t
 #endif
 
 void TFT_ILI9163C::setAddr(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1){
-	#if defined(__MK20DX128__) || defined(__MK20DX256__)
+	#if defined(__MK20DX128__) || defined(__MK20DX256__) || defined(__IMXRT1052__) || defined(__IMXRT1062__)
 		SPI.beginTransaction(ILI9163C_SPI);
 		_setAddrWindow(x0,y0,x1,y1);
 	#else
@@ -1025,7 +1062,7 @@ void TFT_ILI9163C::setAddr(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1){
 }
 
 void TFT_ILI9163C::setAddrWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
-	#if defined(__MK20DX128__) || defined(__MK20DX256__)
+	#if defined(__MK20DX128__) || defined(__MK20DX256__) || defined(__IMXRT1052__) || defined(__IMXRT1062__)
 		SPI.beginTransaction(ILI9163C_SPI);
 		_setAddrWindow(x0,y0,x1,y1);
 		SPI.endTransaction();
@@ -1051,7 +1088,7 @@ void TFT_ILI9163C::setAddrWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t
 	#endif
 }
 
-#if defined(__MK20DX128__) || defined(__MK20DX256__)
+#if defined(__MK20DX128__) || defined(__MK20DX256__) || defined(__IMXRT1052__) || defined(__IMXRT1062__)
 void TFT_ILI9163C::_setAddrWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
 	writecommand_cont(CMD_CLMADRS); // Column
 	if (rotation == 0 || rotation > 1){
@@ -1098,7 +1135,7 @@ void TFT_ILI9163C::setRotation(uint8_t m) {
 		break;
 	}
 	colorSpace(_colorspaceData);
-	#if defined(__MK20DX128__) || defined(__MK20DX256__)
+	#if defined(__MK20DX128__) || defined(__MK20DX256__) || defined(__IMXRT1052__) || defined(__IMXRT1062__)
 		SPI.beginTransaction(ILI9163C_SPI);
 		writecommand_cont(CMD_MADCTL);
 		writedata8_last(_Mactrl_Data);

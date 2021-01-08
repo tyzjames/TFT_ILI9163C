@@ -127,6 +127,10 @@ Done!
 #endif
 
 
+#include <SPI.h>
+#define ILI9341_SPICLOCK 30000000
+#define ILI9341_SPICLOCK_READ 6500000
+
 //--------- Keep out hands from here!-------------
 
 #define	BLACK   		0x0000
@@ -140,7 +144,7 @@ class TFT_ILI9163C : public Adafruit_GFX {
 
  public:
 
-	#if defined(__MK20DX128__) || defined(__MK20DX256__)
+	#if defined(__MK20DX128__) || defined(__MK20DX256__) || defined(__IMXRT1052__) || defined(__IMXRT1062__)
 		TFT_ILI9163C(uint8_t cspin,uint8_t dcpin,uint8_t rstpin=255,uint8_t mosi=11,uint8_t sclk=13);
 	#elif defined(__MKL26Z64__)
 		TFT_ILI9163C(uint8_t cspin,uint8_t dcpin,uint8_t rstpin=255,uint8_t mosi=11,uint8_t sclk=13);
@@ -158,7 +162,7 @@ class TFT_ILI9163C : public Adafruit_GFX {
 				drawPixel(int16_t x, int16_t y, uint16_t color),
 				drawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t color),
 				drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t color),
-				#if defined(__MK20DX128__) || defined(__MK20DX256__)//workaround to get more speed from Teensy
+				#if defined(__MK20DX128__) || defined(__MK20DX256__) || defined(__IMXRT1052__) || defined(__IMXRT1062__)//workaround to get more speed from Teensy
 					drawLine(int16_t x0, int16_t y0,int16_t x1, int16_t y1, uint16_t color),
 					drawRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color),
 				#endif
@@ -397,15 +401,157 @@ class TFT_ILI9163C : public Adafruit_GFX {
 			_setAddrWindow(x, y, x, y);
 			writedata16_cont(color);
 		}
-	#else
-		uint8_t 			_cs,_rs,_rst;	
+	#elif defined(__IMXRT1052__) || defined(__IMXRT1062__)  // Teensy 4.x
+	// T4
+		void _setAddrWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1);//graphic Addressing for Teensy
+
+
+		void HLine(int16_t x, int16_t y, int16_t w, uint16_t color) 
+		__attribute__((always_inline)) {
+			_setAddrWindow(x, y, x+w-1, y);
+			do { writedata16_cont(color); } while (--w > 0);
+		}
+
+		void VLine(int16_t x, int16_t y, int16_t h, uint16_t color) 
+		__attribute__((always_inline)) {
+			_setAddrWindow(x, y, x, y+h-1);
+			do { writedata16_cont(color); } while (--h > 0);
+		}
+		
+		void Pixel(int16_t x, int16_t y, uint16_t color) 
+		__attribute__((always_inline)) {
+			_setAddrWindow(x, y, x, y);
+			writedata16_cont(color);
+		}
+
+
+		void DIRECT_WRITE_LOW(volatile uint32_t * base, uint32_t mask)  __attribute__((always_inline)) {
+			*(base+34) = mask;
+		}
+		void DIRECT_WRITE_HIGH(volatile uint32_t * base, uint32_t mask)  __attribute__((always_inline)) {
+			*(base+33) = mask;
+		}
+		void waitFifoNotFull(void) {
+			uint32_t tmp __attribute__((unused));
+			// Serial.println("Wait fifo");
+			do {
+				if ((IMXRT_LPSPI4_S.RSR & LPSPI_RSR_RXEMPTY) == 0)  {
+					tmp = IMXRT_LPSPI4_S.RDR;  // Read any pending RX bytes in
+					if (_pending_rx_count) _pending_rx_count--; //decrement count of bytes still levt
+				}
+			} while ((IMXRT_LPSPI4_S.SR & LPSPI_SR_TDF) == 0) ;
+			// Serial.println("fifo done");
+		}
+		void waitTransmitComplete(void)  {
+			uint32_t tmp __attribute__((unused));
+		//    digitalWriteFast(2, HIGH);
+
+			while (_pending_rx_count) {
+				if ((IMXRT_LPSPI4_S.RSR & LPSPI_RSR_RXEMPTY) == 0)  {
+					tmp = IMXRT_LPSPI4_S.RDR;  // Read any pending RX bytes in
+					_pending_rx_count--; //decrement count of bytes still levt
+				}
+			}
+			IMXRT_LPSPI4_S.CR = LPSPI_CR_MEN | LPSPI_CR_RRF;       // Clear RX FIFO
+		//    digitalWriteFast(2, LOW);
+		}
+
+
+		#define TCR_MASK  (LPSPI_TCR_PCS(3) | LPSPI_TCR_FRAMESZ(31) | LPSPI_TCR_CONT | LPSPI_TCR_RXMSK )
+		void maybeUpdateTCR(uint32_t requested_tcr_state) /*__attribute__((always_inline)) */ {
+			if ((_spi_tcr_current & TCR_MASK) != requested_tcr_state) {
+				bool dc_state_change = (_spi_tcr_current & LPSPI_TCR_PCS(3)) != (requested_tcr_state & LPSPI_TCR_PCS(3));
+				_spi_tcr_current = (_spi_tcr_current & ~TCR_MASK) | requested_tcr_state ;
+				// only output when Transfer queue is empty.
+				if (!dc_state_change || !_dcpinmask) {
+					while ((IMXRT_LPSPI4_S.FSR & 0x1f) )	;
+					IMXRT_LPSPI4_S.TCR = _spi_tcr_current;	// update the TCR
+
+				} else {
+					waitTransmitComplete();
+					if (requested_tcr_state & LPSPI_TCR_PCS(3)) DIRECT_WRITE_HIGH(_dcport, _dcpinmask);
+					else DIRECT_WRITE_LOW(_dcport, _dcpinmask);
+					IMXRT_LPSPI4_S.TCR = _spi_tcr_current & ~(LPSPI_TCR_PCS(3) | LPSPI_TCR_CONT);	// go ahead and update TCR anyway?  
+
+				}
+			}
+		}
+
+		void beginSPITransaction(uint32_t clock = ILI9341_SPICLOCK) __attribute__((always_inline)) {
+			SPI.beginTransaction(SPISettings(clock, MSBFIRST, SPI_MODE0));
+			if (!_dcport) _spi_tcr_current = IMXRT_LPSPI4_S.TCR; 	// Only if DC is on hardware CS 
+			if (_csport)
+				DIRECT_WRITE_LOW(_csport, _cspinmask);
+		}
+		void endSPITransaction() __attribute__((always_inline)) {
+			if (_csport)
+				DIRECT_WRITE_HIGH(_csport, _cspinmask);
+			SPI.endTransaction();
+		}
+
+		// BUGBUG:: currently assumming we only have CS_0 as valid CS
+		void writecommand_cont(uint8_t c) __attribute__((always_inline)) {
+			maybeUpdateTCR(_tcr_dc_assert | LPSPI_TCR_FRAMESZ(7) /*| LPSPI_TCR_CONT*/);
+			IMXRT_LPSPI4_S.TDR = c;
+			_pending_rx_count++;	//
+			waitFifoNotFull();
+		}
+		void writedata8_cont(uint8_t c) __attribute__((always_inline)) {
+			maybeUpdateTCR(_tcr_dc_not_assert | LPSPI_TCR_FRAMESZ(7) | LPSPI_TCR_CONT);
+			IMXRT_LPSPI4_S.TDR = c;
+			_pending_rx_count++;	//
+			waitFifoNotFull();
+		}
+		void writedata16_cont(uint16_t d) __attribute__((always_inline)) {
+			maybeUpdateTCR(_tcr_dc_not_assert | LPSPI_TCR_FRAMESZ(15) | LPSPI_TCR_CONT);
+			IMXRT_LPSPI4_S.TDR = d;
+			_pending_rx_count++;	//
+			waitFifoNotFull();
+		}
+		void writecommand_last(uint8_t c) __attribute__((always_inline)) {
+			maybeUpdateTCR(_tcr_dc_assert | LPSPI_TCR_FRAMESZ(7));
+			IMXRT_LPSPI4_S.TDR = c;
+	//		IMXRT_LPSPI4_S.SR = LPSPI_SR_WCF | LPSPI_SR_FCF | LPSPI_SR_TCF;
+			_pending_rx_count++;	//
+			waitTransmitComplete();
+		}
+		void writedata8_last(uint8_t c) __attribute__((always_inline)) {
+			maybeUpdateTCR(_tcr_dc_not_assert | LPSPI_TCR_FRAMESZ(7));
+			IMXRT_LPSPI4_S.TDR = c;
+	//		IMXRT_LPSPI4_S.SR = LPSPI_SR_WCF | LPSPI_SR_FCF | LPSPI_SR_TCF;
+			_pending_rx_count++;	//
+			waitTransmitComplete();
+		}
+		void writedata16_last(uint16_t d) __attribute__((always_inline)) {
+			maybeUpdateTCR(_tcr_dc_not_assert | LPSPI_TCR_FRAMESZ(15));
+			IMXRT_LPSPI4_S.TDR = d;
+	//		IMXRT_LPSPI4_S.SR = LPSPI_SR_WCF | LPSPI_SR_FCF | LPSPI_SR_TCF;
+			_pending_rx_count++;	//
+			waitTransmitComplete();
+		}
+
+		uint8_t 			_cs,_rs,_rst;
+		uint8_t 			pcs_data, pcs_command;
+		uint8_t 			_mosi, _sclk;
 	#endif
 	
-	#if !defined(__MK20DX128__) && !defined(__MK20DX256__)
+	#if !defined(__MK20DX128__) && !defined(__MK20DX256__) && !defined(__IMXRT1052__) && !defined(__IMXRT1062__)
 		void		writecommand(uint8_t c);
 		void		writedata(uint8_t d);
 		void		writedata16(uint16_t d);
 	#endif
+	
+	#if defined(__IMXRT1052__) || defined(__IMXRT1062__)  // Teensy 4.x
+		uint32_t _cspinmask;
+		volatile uint32_t *_csport;
+		uint32_t _spi_tcr_current;
+		uint32_t _dcpinmask;
+		uint8_t _pending_rx_count;
+		volatile uint32_t *_dcport;
+		uint32_t _tcr_dc_assert;
+		uint32_t _tcr_dc_not_assert;
+	#endif
+
  private:
 	void 		colorSpace(uint8_t cspace);
 	void 		setAddr(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1);
